@@ -50,6 +50,8 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
+  # ── CodeDeploy ─────────────────────────────────────────────────────────────
+
   CodeDeployApp:
     Type: AWS::CodeDeploy::Application
     Properties:
@@ -102,6 +104,84 @@ Resources:
               ListenerArns:
                 - !Ref HTTPListenerArn
 
+  # ── CodeBuild — generates taskdef.json at pipeline runtime ─────────────────
+  # taskdef.json.template in the repo contains ACCOUNT_ID / AWS_REGION
+  # placeholders. CodeBuild substitutes real values so no account-specific
+  # data is ever stored in the git repository.
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub ${ArtifactBucket.Arn}/*
+              # sts:GetCallerIdentity is implicitly allowed for any IAM principal;
+              # no explicit statement required. Included here for clarity.
+              - Effect: Allow
+                Action: sts:GetCallerIdentity
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  GenerateTaskDefProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${ProjectName}-generate-taskdef
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                - cp taskdef.json.template taskdef.json
+                - sed -i "s/ACCOUNT_ID/${ACCOUNT_ID}/g" taskdef.json
+                - sed -i "s/AWS_REGION/${AWS_DEFAULT_REGION}/g" taskdef.json
+                - echo "Generated taskdef.json:"
+                - cat taskdef.json
+          artifacts:
+            files:
+              - taskdef.json
+              - appspec.yaml
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ── CodePipeline ────────────────────────────────────────────────────────────
+
   PipelineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -137,6 +217,11 @@ Resources:
                 Resource: !Ref ECRRepositoryArn
               - Effect: Allow
                 Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: !GetAtt GenerateTaskDefProject.Arn
+              - Effect: Allow
+                Action:
                   - codedeploy:CreateDeployment
                   - codedeploy:GetDeployment
                   - codedeploy:GetApplication
@@ -167,6 +252,7 @@ Resources:
         Type: S3
         Location: !Ref ArtifactBucket
       Stages:
+        # ── Stage 1: Source ──────────────────────────────────────────────────
         - Name: Source
           Actions:
             - Name: ECRImageSource
@@ -184,17 +270,37 @@ Resources:
             - Name: InfraRepoSource
               ActionTypeId:
                 Category: Source
-                Owner: ThirdParty
-                Provider: GitHub
+                Owner: AWS
+                Provider: CodeStarSourceConnection   # CodeConnections (not legacy GitHub V1)
                 Version: '1'
               Configuration:
                 ConnectionArn: !Ref GitHubConnectionArn
                 FullRepositoryId: !Sub ${InfraRepoOwner}/${InfraRepoName}
                 BranchName: !Ref InfraRepoBranch
                 OutputArtifactFormat: CODE_ZIP
+                DetectChanges: 'false'               # ECR push drives the pipeline, not infra commits
               OutputArtifacts:
                 - Name: SourceArtifact
               RunOrder: 1
+
+        # ── Stage 2: Build — substitute account ID + region into taskdef ─────
+        - Name: Build
+          Actions:
+            - Name: GenerateTaskDef
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref GenerateTaskDefProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+
+        # ── Stage 3: Deploy — blue/green via CodeDeploy ──────────────────────
         - Name: Deploy
           Actions:
             - Name: BlueGreenDeploy
@@ -206,15 +312,17 @@ Resources:
               Configuration:
                 ApplicationName: !Ref CodeDeployApp
                 DeploymentGroupName: !Ref DeploymentGroup
-                TaskDefinitionTemplateArtifact: SourceArtifact
+                TaskDefinitionTemplateArtifact: BuildArtifact   # generated taskdef.json
                 TaskDefinitionTemplatePath: taskdef.json
-                AppSpecTemplateArtifact: SourceArtifact
+                AppSpecTemplateArtifact: BuildArtifact
                 AppSpecTemplatePath: appspec.yaml
                 Image1ArtifactName: ImageArtifact
                 Image1ContainerName: IMAGE1_NAME
               InputArtifacts:
-                - Name: SourceArtifact
+                - Name: BuildArtifact
                 - Name: ImageArtifact
+
+  # ── EventBridge — trigger pipeline on ECR image push ───────────────────────
 
   EventBridgeRole:
     Type: AWS::IAM::Role
