@@ -1,0 +1,52 @@
+name: Sync CloudFormation Templates to S3
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'templates/**'
+      - 'deployment-file.yaml'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TEMPLATES_BUCKET: ${{ vars.TEMPLATES_BUCKET }}
+
+jobs:
+  sync:
+    name: Upload child templates to S3
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload child templates to S3
+        run: |
+          for template in templates/0*.yaml; do
+            filename=$(basename "$template")
+            aws s3 cp "$template" "s3://${TEMPLATES_BUCKET}/templates/${filename}"
+            echo "Uploaded: ${filename}"
+          done
+
+      - name: Write job summary
+        run: |
+          echo "### Templates synced to S3 :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Template | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          for template in templates/0*.yaml; do
+            filename=$(basename "$template")
+            echo "| \`${filename}\` | Uploaded |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Bucket: \`${TEMPLATES_BUCKET}\`" >> "$GITHUB_STEP_SUMMARY"
