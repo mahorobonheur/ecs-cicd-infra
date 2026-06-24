@@ -93,6 +93,12 @@ Resources:
       TaskDefinition: !Ref TaskDefinition
       LaunchType: FARGATE
       DesiredCount: 1
+      # Grace period lets CloudFormation consider the service stable while the
+      # placeholder nginx image is running (nginx listens on port 80 but health
+      # checks target port 8080 /health). Once CodeDeploy deploys the real Java
+      # app (which serves /health on 8080) health checks pass naturally and this
+      # grace period becomes irrelevant.
+      HealthCheckGracePeriodSeconds: 3600
       DeploymentController:
         Type: CODE_DEPLOY
       NetworkConfiguration:
