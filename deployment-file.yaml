@@ -2,9 +2,9 @@ template-file-path: templates/root.yaml
 
 parameters:
   ProjectName: ecs-cicd
-  TemplatesBucketUrl: REPLACE_WITH_TemplatesBucketUrl_FROM_BOOTSTRAP_OUTPUTS
-  InitialImageUri: REPLACE_WITH_INITIAL_ECR_IMAGE_URI
-  GitHubConnectionArn: REPLACE_WITH_CODECONNECTIONS_ARN
+  TemplatesBucketUrl: '{{resolve:ssm:/ecs-cicd/templates-bucket-url}}'
+  InitialImageUri: public.ecr.aws/nginx/nginx:stable-alpine
+  GitHubConnectionArn: '{{resolve:ssm:/ecs-cicd/github-connection-arn}}'
   InfraRepoOwner: mahorobonheur
   InfraRepoName: ecs-cicd-infra
   InfraRepoBranch: main
