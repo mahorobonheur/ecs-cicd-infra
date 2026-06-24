@@ -71,6 +71,18 @@ Resources:
         - Name: app
           Image: !Ref InitialImageUri
           Essential: true
+          # Override nginx to listen on 8080 and serve /health with 200 OK.
+          # The default nginx image listens on port 80, which fails the ALB
+          # health check (port 8080 /health). This Command reconfigures it
+          # so CloudFormation can detect a stable service.
+          # CodeDeploy replaces this task definition on first pipeline run;
+          # this Command is never applied to the real Java app container.
+          Command:
+            - /bin/sh
+            - -c
+            - >-
+              printf 'server{listen 8080;location /health{return 200 ok;}}'
+              > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
