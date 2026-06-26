@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  GitSync roles — deploy this ONCE from the AWS Console AFTER bootstrap.yaml.
+  Creates:
+    - GitSyncRole: assumed by the CloudFormation GitSync service to watch
+      the GitHub repo and trigger stack updates via CodeConnections.
+    - CloudFormationExecutionRole: assumed by CloudFormation when it
+      creates/updates/deletes all resources in the nested stacks.
+
+  After deploying, use the Outputs when configuring GitSync:
+    - "IAM role" field  →  GitSyncRoleArn
+    - "Stack role" field →  CloudFormationExecutionRoleArn
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Must match the ProjectName used in bootstrap.yaml (e.g. ecs-cicd)
+
+Resources:
+
+  # ── GitSync service role ────────────────────────────────────────────────────
+  # Assumed by cloudformation.sync.codeconnections.amazonaws.com
+  # Needs: read from GitHub via CodeConnections + trigger CFN change sets
+  GitSyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-gitsync-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.sync.codeconnections.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GitSyncPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Allow GitSync to use ANY CodeConnections connection in this account.
+              # Scoped to codestar-connections — low blast radius.
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Sub arn:aws:codestar-connections:*:${AWS::AccountId}:connection/*
+
+              # CloudFormation permissions to create/execute change sets on the root stack
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeChangeSetHooks
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:GetTemplate
+                  - cloudformation:ListChangeSets
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+
+              # EventBridge permissions for GitSync to create/manage event rules
+              # that watch the GitHub repository for changes
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:DeleteRule
+                  - events:RemoveTargets
+                  - events:DescribeRule
+                  - events:ListTargetsByRule
+                Resource: '*'
+
+              # S3 read access so GitSync can pass template URLs to CloudFormation
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub arn:aws:s3:::${ProjectName}-cfn-templates-${AWS::AccountId}/*
+
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ── CloudFormation execution role ──────────────────────────────────────────
+  # Assumed by CloudFormation when it provisions all nested stack resources.
+  # Needs broad permissions to create VPC, ECS, ALB, IAM, ECR, CodePipeline,
+  # CodeDeploy, EventBridge, CloudWatch, and S3 resources.
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-cfn-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # AdministratorAccess is acceptable for a lab.
+        # In production, replace with a scoped policy listing only the
+        # services your templates actually create.
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  GitSyncRoleArn:
+    Description: >
+      Use this for the "IAM role" field when configuring CloudFormation GitSync.
+    Value: !GetAtt GitSyncRole.Arn
+
+  CloudFormationExecutionRoleArn:
+    Description: >
+      Use this for the "Stack role" field when configuring CloudFormation GitSync
+      (Advanced options → IAM role).
+    Value: !GetAtt CloudFormationExecutionRole.Arn

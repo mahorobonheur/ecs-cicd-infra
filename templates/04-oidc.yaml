@@ -32,7 +32,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}/${AppRepoName}:*
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}/${AppRepoName}:ref:refs/heads/main
       Policies:
         - PolicyName: ECRPushPolicy
           PolicyDocument:
@@ -52,6 +52,11 @@ Resources:
                   - ecr:CompleteLayerUpload
                   - ecr:PutImage
                 Resource: !Ref ECRRepositoryArn
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ProjectName}-docker-build
       Tags:
         - Key: Project
           Value: !Ref ProjectName

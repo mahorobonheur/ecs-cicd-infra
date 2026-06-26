@@ -4,14 +4,17 @@ parameters:
   ProjectName: ecs-cicd
   TemplatesBucketUrl: '{{resolve:ssm:/ecs-cicd/templates-bucket-url}}'
   InitialImageUri: public.ecr.aws/nginx/nginx:stable-alpine
-  GitHubConnectionArn: '{{resolve:ssm:/ecs-cicd/github-connection-arn}}'
-  InfraRepoOwner: mahorobonheur
-  InfraRepoName: ecs-cicd-infra
-  InfraRepoBranch: main
   GitHubOwner: mahorobonheur
   AppRepoName: ecs-cicd-app
+  VPCId: '{{resolve:ssm:/ecs-cicd/vpc-id}}'
+  PublicSubnet1: '{{resolve:ssm:/ecs-cicd/public-subnet-1}}'
+  PublicSubnet2: '{{resolve:ssm:/ecs-cicd/public-subnet-2}}'
+  PrivateSubnet1: '{{resolve:ssm:/ecs-cicd/private-subnet-1}}'
+  PrivateSubnet2: '{{resolve:ssm:/ecs-cicd/private-subnet-2}}'
+  PrivateRouteTable: '{{resolve:ssm:/ecs-cicd/private-route-table}}'
 
 tags:
   Project: ecs-cicd
   Environment: production
   ManagedBy: CloudFormation-GitSync
+  Layer: platform

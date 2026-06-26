@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  ECS CI/CD Lab — root (parent) stack.
-  Orchestrates all nested child stacks and wires their outputs together as
-  parameters. This is the only template CloudFormation GitSync needs to watch.
-  Child templates must be uploaded to S3 before deploying this stack
-  (use scripts/upload-templates.sh).
+  ECS CI/CD Lab — platform root stack (ecs-cicd-infra).
+  Orchestrates ECR, ALB, ECS cluster, and OIDC roles.
+  VPC values are consumed from SSM (published by ecs-cicd-network).
+  Pipeline resources live in the separate ecs-cicd-pipeline repo.
+  Key platform outputs are published to SSM for the pipeline layer to consume.
 
 Parameters:
   ProjectName:
@@ -23,24 +23,6 @@ Parameters:
       Full ECR image URI for the very first ECS task definition.
       After initial deploy, CodeDeploy owns all subsequent updates.
 
-  GitHubConnectionArn:
-    Type: String
-    Description: >
-      ARN of the CodeConnections connection to GitHub (create in
-      CodePipeline > Settings > Connections and approve it first).
-
-  InfraRepoOwner:
-    Type: String
-    Description: GitHub username or org that owns the infra repository
-
-  InfraRepoName:
-    Type: String
-    Description: Name of the infra GitHub repository (e.g. ecs-cicd-infra)
-
-  InfraRepoBranch:
-    Type: String
-    Description: Branch to track for appspec.yaml / taskdef.json
-
   GitHubOwner:
     Type: String
     Description: GitHub username or org that owns the application repository
@@ -49,17 +31,32 @@ Parameters:
     Type: String
     Description: Name of the application GitHub repository (e.g. ecs-cicd-app)
 
-Resources:
+  # ── VPC values resolved from SSM (published by ecs-cicd-network) ───────────
+  VPCId:
+    Type: String
+    Description: VPC ID — resolved from SSM /ecs-cicd/vpc-id
 
-  VPCStack:
-    Type: AWS::CloudFormation::Stack
-    Properties:
-      TemplateURL: !Sub ${TemplatesBucketUrl}/00-vpc.yaml
-      Parameters:
-        ProjectName: !Ref ProjectName
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
+  PublicSubnet1:
+    Type: String
+    Description: Public subnet 1 ID — resolved from SSM /ecs-cicd/public-subnet-1
+
+  PublicSubnet2:
+    Type: String
+    Description: Public subnet 2 ID — resolved from SSM /ecs-cicd/public-subnet-2
+
+  PrivateSubnet1:
+    Type: String
+    Description: Private subnet 1 ID — resolved from SSM /ecs-cicd/private-subnet-1
+
+  PrivateSubnet2:
+    Type: String
+    Description: Private subnet 2 ID — resolved from SSM /ecs-cicd/private-subnet-2
+
+  PrivateRouteTable:
+    Type: String
+    Description: Private route table ID — resolved from SSM /ecs-cicd/private-route-table
+
+Resources:
 
   ECRStack:
     Type: AWS::CloudFormation::Stack
@@ -67,10 +64,10 @@ Resources:
       TemplateURL: !Sub ${TemplatesBucketUrl}/01-ecr.yaml
       Parameters:
         ProjectName: !Ref ProjectName
-        VPCId: !GetAtt VPCStack.Outputs.VPCId
-        PrivateSubnet1: !GetAtt VPCStack.Outputs.PrivateSubnet1
-        PrivateSubnet2: !GetAtt VPCStack.Outputs.PrivateSubnet2
-        PrivateRouteTable: !GetAtt VPCStack.Outputs.PrivateRouteTable
+        VPCId: !Ref VPCId
+        PrivateSubnet1: !Ref PrivateSubnet1
+        PrivateSubnet2: !Ref PrivateSubnet2
+        PrivateRouteTable: !Ref PrivateRouteTable
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -81,9 +78,9 @@ Resources:
       TemplateURL: !Sub ${TemplatesBucketUrl}/02-alb.yaml
       Parameters:
         ProjectName: !Ref ProjectName
-        VPCId: !GetAtt VPCStack.Outputs.VPCId
-        PublicSubnet1: !GetAtt VPCStack.Outputs.PublicSubnet1
-        PublicSubnet2: !GetAtt VPCStack.Outputs.PublicSubnet2
+        VPCId: !Ref VPCId
+        PublicSubnet1: !Ref PublicSubnet1
+        PublicSubnet2: !Ref PublicSubnet2
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -95,8 +92,8 @@ Resources:
       Parameters:
         ProjectName: !Ref ProjectName
         InitialImageUri: !Ref InitialImageUri
-        PrivateSubnet1: !GetAtt VPCStack.Outputs.PrivateSubnet1
-        PrivateSubnet2: !GetAtt VPCStack.Outputs.PrivateSubnet2
+        PrivateSubnet1: !Ref PrivateSubnet1
+        PrivateSubnet2: !Ref PrivateSubnet2
         ECSSecurityGroupId: !GetAtt ALBStack.Outputs.ECSSecurityGroupId
         TargetGroupBlueArn: !GetAtt ALBStack.Outputs.TargetGroupBlueArn
         HTTPListenerArn: !GetAtt ALBStack.Outputs.HTTPListenerArn
@@ -104,32 +101,10 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
-  PipelineStack:
-    Type: AWS::CloudFormation::Stack
-    Properties:
-      TemplateURL: !Sub ${TemplatesBucketUrl}/04-pipeline.yaml
-      Parameters:
-        ProjectName: !Ref ProjectName
-        GitHubConnectionArn: !Ref GitHubConnectionArn
-        InfraRepoOwner: !Ref InfraRepoOwner
-        InfraRepoName: !Ref InfraRepoName
-        InfraRepoBranch: !Ref InfraRepoBranch
-        ECRRepositoryName: !GetAtt ECRStack.Outputs.ECRRepositoryName
-        ECRRepositoryArn: !GetAtt ECRStack.Outputs.ECRRepositoryArn
-        ClusterName: !GetAtt ECSStack.Outputs.ClusterName
-        ServiceName: !GetAtt ECSStack.Outputs.ServiceName
-        TargetGroupBlueName: !GetAtt ALBStack.Outputs.TargetGroupBlueName
-        TargetGroupGreenName: !GetAtt ALBStack.Outputs.TargetGroupGreenName
-        HTTPListenerArn: !GetAtt ALBStack.Outputs.HTTPListenerArn
-        TaskExecutionRoleArn: !GetAtt ECSStack.Outputs.TaskExecutionRoleArn
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-
   OIDCStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: !Sub ${TemplatesBucketUrl}/05-oidc.yaml
+      TemplateURL: !Sub ${TemplatesBucketUrl}/04-oidc.yaml
       Parameters:
         ProjectName: !Ref ProjectName
         GitHubOwner: !Ref GitHubOwner
@@ -138,6 +113,88 @@ Resources:
       Tags:
         - Key: Project
           Value: !Ref ProjectName
+
+  # ── SSM exports for ecs-cicd-pipeline ──────────────────────────────────────
+  ClusterNameParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/cluster-name
+      Type: String
+      Value: !GetAtt ECSStack.Outputs.ClusterName
+      Tags:
+        Project: !Ref ProjectName
+
+  ServiceNameParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/service-name
+      Type: String
+      Value: !GetAtt ECSStack.Outputs.ServiceName
+      Tags:
+        Project: !Ref ProjectName
+
+  TaskExecutionRoleArnParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/task-execution-role-arn
+      Type: String
+      Value: !GetAtt ECSStack.Outputs.TaskExecutionRoleArn
+      Tags:
+        Project: !Ref ProjectName
+
+  ECRRepositoryNameParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/ecr-repo-name
+      Type: String
+      Value: !GetAtt ECRStack.Outputs.ECRRepositoryName
+      Tags:
+        Project: !Ref ProjectName
+
+  ECRRepositoryArnParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/ecr-repo-arn
+      Type: String
+      Value: !GetAtt ECRStack.Outputs.ECRRepositoryArn
+      Tags:
+        Project: !Ref ProjectName
+
+  ECRRepositoryUriParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/ecr-repo-uri
+      Type: String
+      Value: !GetAtt ECRStack.Outputs.ECRRepositoryUri
+      Tags:
+        Project: !Ref ProjectName
+
+  HTTPListenerArnParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/alb-listener-arn
+      Type: String
+      Value: !GetAtt ALBStack.Outputs.HTTPListenerArn
+      Tags:
+        Project: !Ref ProjectName
+
+  TargetGroupBlueNameParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/tg-blue-name
+      Type: String
+      Value: !GetAtt ALBStack.Outputs.TargetGroupBlueName
+      Tags:
+        Project: !Ref ProjectName
+
+  TargetGroupGreenNameParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ecs-cicd/tg-green-name
+      Type: String
+      Value: !GetAtt ALBStack.Outputs.TargetGroupGreenName
+      Tags:
+        Project: !Ref ProjectName
 
 Outputs:
   ALBEndpoint:
@@ -157,6 +214,3 @@ Outputs:
 
   ECSServiceName:
     Value: !GetAtt ECSStack.Outputs.ServiceName
-
-  PipelineName:
-    Value: !GetAtt PipelineStack.Outputs.PipelineName
