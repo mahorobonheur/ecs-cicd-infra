@@ -6,13 +6,14 @@ Parameters:
     Type: String
   InitialImageUri:
     Type: String
-    Description: >
-      ECR image URI for the initial task definition. After first deployment
-      CodeDeploy owns all subsequent updates — do not change this parameter
-      after initial stack creation.
+    Description: ECR image URI for initial task definition.
   PrivateSubnet1:
     Type: AWS::EC2::Subnet::Id
   PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet2:
     Type: AWS::EC2::Subnet::Id
   ECSSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
@@ -109,15 +110,15 @@ Resources:
       TaskDefinition: !Ref TaskDefinition
       LaunchType: FARGATE
       DesiredCount: 1
-      HealthCheckGracePeriodSeconds: 30   # reduced to fail fast if something is wrong
+      HealthCheckGracePeriodSeconds: 60
       DeploymentController:
         Type: CODE_DEPLOY
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
+          AssignPublicIp: ENABLED
           Subnets:
-            - !Ref PrivateSubnet1
-            - !Ref PrivateSubnet2
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
           SecurityGroups:
             - !Ref ECSSecurityGroupId
       LoadBalancers:

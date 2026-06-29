@@ -94,6 +94,8 @@ Resources:
         InitialImageUri: !Ref InitialImageUri
         PrivateSubnet1: !Ref PrivateSubnet1
         PrivateSubnet2: !Ref PrivateSubnet2
+        PublicSubnet1: !Ref PublicSubnet1          # NEW
+        PublicSubnet2: !Ref PublicSubnet2          # NEW
         ECSSecurityGroupId: !GetAtt ALBStack.Outputs.ECSSecurityGroupId
         TargetGroupBlueArn: !GetAtt ALBStack.Outputs.TargetGroupBlueArn
         HTTPListenerArn: !GetAtt ALBStack.Outputs.HTTPListenerArn
