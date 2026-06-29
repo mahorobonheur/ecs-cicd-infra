@@ -39,6 +39,9 @@ Resources:
     Properties:
       LogGroupName: !Sub /ecs/${ProjectName}
       RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
 
   TaskExecutionRole:
     Type: AWS::IAM::Role
@@ -74,24 +77,9 @@ Resources:
           Command:
             - /bin/sh
             - -c
-            - |
-              cat > /etc/nginx/conf.d/default.conf << 'EOF'
-              server {
-                  listen 8080;
-                  server_name localhost;
-                  
-                  location /health {
-                      return 200 'ok\n';
-                      add_header Content-Type text/plain;
-                  }
-                  
-                  location / {
-                      return 200 'OK\n';
-                      add_header Content-Type text/plain;
-                  }
-              }
-              EOF
-              nginx -g 'daemon off;'
+            - >
+              echo "server { listen 8080; location /health { return 200 'ok\n'; add_header Content-Type text/plain; } location / { return 200 'OK\n'; add_header Content-Type text/plain; } }" 
+              > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
@@ -101,6 +89,9 @@ Resources:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
 
   ECSService:
     Type: AWS::ECS::Service
@@ -138,6 +129,9 @@ Resources:
       Name: !Sub /${ProjectName}/listener-arn
       Type: String
       Value: !Ref HTTPListenerArn
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
 
   ScalableTarget:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
