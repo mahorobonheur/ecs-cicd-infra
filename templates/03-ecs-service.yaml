@@ -72,14 +72,22 @@ Resources:
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       ContainerDefinitions:
         - Name: app
-          Image: nginx:alpine
+          Image: python:3.11-alpine
           Essential: true
           Command:
             - /bin/sh
             - -c
-            - >
-              echo "server { listen 8080; location /health { return 200 'ok\n'; add_header Content-Type text/plain; } location / { return 200 'OK\n'; add_header Content-Type text/plain; } }" 
-              > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'
+            - |
+              python3 -c "
+              from http.server import HTTPServer, BaseHTTPRequestHandler
+              class H(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      self.send_response(200)
+                      self.send_header('Content-type', 'text/plain')
+                      self.end_headers()
+                      self.wfile.write(b'ok')
+              HTTPServer(('0.0.0.0', 8080), H).serve_forever()
+              "
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
@@ -101,7 +109,7 @@ Resources:
       TaskDefinition: !Ref TaskDefinition
       LaunchType: FARGATE
       DesiredCount: 1
-      HealthCheckGracePeriodSeconds: 60
+      HealthCheckGracePeriodSeconds: 30   # reduced to fail fast if something is wrong
       DeploymentController:
         Type: CODE_DEPLOY
       NetworkConfiguration:
