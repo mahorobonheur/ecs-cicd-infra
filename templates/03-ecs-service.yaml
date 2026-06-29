@@ -95,7 +95,6 @@ Resources:
 
   ECSService:
     Type: AWS::ECS::Service
-    DependsOn: HTTPListenerArnParam
     Properties:
       ServiceName: !Sub ${ProjectName}-service
       Cluster: !Ref ECSCluster
@@ -117,18 +116,6 @@ Resources:
         - ContainerName: app
           ContainerPort: 8080
           TargetGroupArn: !Ref TargetGroupBlueArn
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-
-  # Dummy resource to create an explicit dependency on the listener
-  # so the service isn't registered before the ALB listener exists.
-  HTTPListenerArnParam:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub /${ProjectName}/listener-arn
-      Type: String
-      Value: !Ref HTTPListenerArn
       Tags:
         - Key: Project
           Value: !Ref ProjectName
